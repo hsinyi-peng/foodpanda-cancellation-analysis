@@ -1,10 +1,14 @@
 # Foodpanda Order Cancellation Analysis
 
-Predicting food-delivery order cancellations from a Foodpanda-style transactions dataset, using logistic regression, a classification tree (CART), and a random forest — with an emphasis on **asymmetric cost** evaluation (a missed cancellation is treated as costlier than a false alarm).
+A cancellation-risk diagnostic: do order, customer, and restaurant attributes actually predict which orders get cancelled? Tested with logistic regression, a classification tree (CART), and a random forest — evaluated under an **asymmetric cost** assumption (missing a real cancellation costs more than a false alarm).
 
-## Overview
+## The Business Question
 
-Food delivery platforms lose revenue and driver time on cancelled orders. This project builds a binary classifier — `cancelled` (1) vs. `not cancelled` (0) — from order, customer, and restaurant attributes, and compares three modeling approaches under a 5:1 false-negative-to-false-positive cost ratio.
+**North Star metric:** order cancellation rate.
+
+Every cancelled order costs a delivery platform the order value, driver time already spent, and customer trust. If a small set of order/customer/restaurant attributes could flag high-risk orders before they cancel, that's a lever ops teams could act on — reroute a driver, prioritize support outreach, or hold a second confirmation. This project tests that directly: can `cancelled` (1 vs. 0) be predicted from order, customer, and restaurant attributes on held-out data?
+
+Because a missed cancellation (driver already en route) is more expensive than a false alarm (an unnecessary check-in), the models are evaluated at a 5:1 false-negative-to-false-positive cost ratio, not just a plain 50/50 cutoff — that's the cutoff a real ops team would actually use.
 
 ## Dataset
 
@@ -45,9 +49,21 @@ The target `cancelled` is derived from `delivery_status` (case-insensitive match
 3. **Train/test split** — 70/30.
 4. **Models**
    - Logistic regression with stepwise (AIC) selection
-   - CART (`rpart`), pruned to the minimum cross-validated error
+   - CART (`rpart`), pruned via cross-validation (minimum-xerror cp, not a hand-picked value) — so if it does find a split, it's one that generalizes, not noise
    - Random forest (`randomForest`), 300 trees
-5. **Evaluation** — ROC AUC, confusion matrices at cutoffs 0.9 / 0.5 / 0.2, plus an asymmetric-cost cutoff (`FN:FP = 5:1` → p = 1/6), and 5-fold CV for the logistic model.
+5. **Evaluation** — ROC AUC, confusion matrices at cutoffs 0.9 / 0.5 / 0.2, plus the asymmetric-cost cutoff (`FN:FP = 5:1` → p = 1/6) that reflects the real operational cost, and 5-fold CV for the logistic model.
+
+## Findings
+
+| Model | AUC (test) |
+|---|---|
+| Logistic regression (stepwise) | ~0.48 |
+| CART (cross-validated pruning) | 0.50 |
+| Random forest | ~0.51 |
+
+**All three land at chance level (AUC ≈ 0.5) — including the cross-validated CART, which is the tell.** Cross-validated pruning picks the tree that generalizes best; when that process settles on "no split beats the baseline," it's a strong signal there's genuinely nothing here to find, not that the model needs more tuning. Digging into why: `delivery_status` and every categorical feature (`gender`, `age`, `city`, `category`, `payment_method`, ...) are close to uniformly distributed in this dataset — consistent with it being synthetically generated for practice rather than sampled from real platform activity, where cancellations are rarely that evenly spread across every segment.
+
+**What this means for root-cause diagnosis:** on real operational data, a cancellation-rate spike almost always traces back to *something* — a specific restaurant, payment method, or time window. The absence of any such pattern here is itself informative: it means this exercise validates the *pipeline* (feature engineering, stepwise selection, cost-sensitive cutoff selection, cross-validation) rather than producing a deployable risk score. The natural next step is running the same pipeline against real Foodpanda operational data, where the cost-weighted evaluation would actually matter.
 
 ## How to run
 
@@ -58,18 +74,6 @@ Rscript analysis/foodpanda_cancellation_analysis.R
 ```
 
 Requires R (≥ 4.0) with packages: `dplyr`, `pROC`, `rpart`, `rpart.plot`, `randomForest`, `boot` — the script installs any that are missing on first run. Plots are written to `outputs/`.
-
-## Results
-
-| Model | AUC (test) |
-|---|---|
-| Logistic regression (stepwise) | ~0.48 |
-| CART (pruned) | 0.50 |
-| Random forest | ~0.51 |
-
-All three models perform at chance level (AUC ≈ 0.5). This is consistent with the underlying data: `delivery_status` and every categorical feature (`gender`, `age`, `city`, `category`, `payment_method`, ...) are close to uniformly distributed, indicating the dataset does not encode a real relationship between order/customer attributes and cancellation — likely because it is synthetically generated for practice purposes rather than sampled from real platform activity.
-
-**Takeaway:** the pipeline (feature engineering, stepwise selection, cost-sensitive CART pruning, cross-validation) is built and validated end-to-end; applying it to real Foodpanda operational data would be the natural next step to obtain a model with genuine predictive lift.
 
 ## License
 
