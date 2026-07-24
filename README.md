@@ -38,6 +38,10 @@ The target `cancelled` is derived from `delivery_status` (case-insensitive match
 │   └── foodpanda_cancellation_analysis.R   # full pipeline: EDA -> models -> evaluation
 ├── data/
 │   └── foodpanda_analysis_dataset.csv
+├── sql/
+│   ├── schema.sql                          # customers / restaurants / orders DDL
+│   ├── build_db.py                         # loads the CSV into sql/foodpanda.db (gitignored)
+│   └── queries.sql                         # JOIN/aggregation EDA + data-validation queries
 ├── outputs/                                # generated on run: EDA & model plots (PNG)
 └── README.md
 ```
@@ -64,6 +68,15 @@ The target `cancelled` is derived from `delivery_status` (case-insensitive match
 **All three land at chance level (AUC ≈ 0.5) — including the cross-validated CART, which is the tell.** Cross-validated pruning picks the tree that generalizes best; when that process settles on "no split beats the baseline," it's a strong signal there's genuinely nothing here to find, not that the model needs more tuning. Digging into why: `delivery_status` and every categorical feature (`gender`, `age`, `city`, `category`, `payment_method`, ...) are close to uniformly distributed in this dataset — consistent with it being synthetically generated for practice rather than sampled from real platform activity, where cancellations are rarely that evenly spread across every segment.
 
 **What this means for root-cause diagnosis:** on real operational data, a cancellation-rate spike almost always traces back to *something* — a specific restaurant, payment method, or time window. The absence of any such pattern here is itself informative: it means this exercise validates the *pipeline* (feature engineering, stepwise selection, cost-sensitive cutoff selection, cross-validation) rather than producing a deployable risk score. The natural next step is running the same pipeline against real Foodpanda operational data, where the cost-weighted evaluation would actually matter.
+
+## SQL Layer
+
+`sql/` normalizes the flat CSV into a `customers` / `restaurants` / `orders` schema (SQLite) and re-derives the cancellation-rate-by-segment numbers from the R EDA via JOINs and `GROUP BY` aggregation, as a cross-check on the R pipeline — plus a set of data-validation queries (referential integrity, duplicate keys, null/out-of-range checks). The payment-method and city cancellation rates in `sql/queries.sql` match the R output exactly (e.g. Card 0.326 / Cash 0.327 / Wallet 0.331; Lahore 0.339 down to Karachi 0.312).
+
+```bash
+python3 sql/build_db.py                        # builds sql/foodpanda.db from data/
+sqlite3 -header -column sql/foodpanda.db < sql/queries.sql
+```
 
 ## How to run
 
